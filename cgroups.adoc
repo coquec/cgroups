@@ -1,9 +1,8 @@
 = cgroups
 :tags: Publish
-:author: Jose Couto
-:email: jcouto
+:author: José Couto
 :date: abril 2022
-:revdate: 20220420
+:revdate: 20220422
 :source-highlighter: rouge
 :toc:
 :toc-title: Índice
@@ -12,6 +11,8 @@
 :appendix-caption: Apéndice
 :figure-caption: Figura
 :table-caption: Tabla
+:description: Notas sobre cgroups. \
+Puede usarse según los términos de la licencia GPLv3.
 
 == cgroups
 
@@ -160,9 +161,9 @@ memory
 io memory
 # cat cgroup.subtree_control
 # echo +io > cgroup.subtree_control
-# cat cgroup.subtree_control       
+# cat cgroup.subtree_control
 io
-# echo "-io" > ../cgroup.subtree_control 
+# echo "-io" > ../cgroup.subtree_control
 echo: write error: device or resource busy
 ----
 
@@ -272,7 +273,7 @@ Podemos ver los controladores disponibles en el sistema consultando el archivo
 
 [source,console]
 ----
-$ cat /proc/cgroups 
+$ cat /proc/cgroups
 #subsys_name    hierarchy       num_cgroups     enabled
 cpuset  0       159     1
 cpu     0       159     1
@@ -305,7 +306,7 @@ es distinto para las versiones 1 y 2:
 
 [source,console]
 ----
-$ cat /proc/self/cgroup 
+$ cat /proc/self/cgroup
 0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-org.kde.konsole-7086a657dd144184a30800e2b453899b.scope
 $ ls /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/app-org.kde.konsole-7086a657dd144184a30800e2b453899b.scope
 cgroup.controllers      cpu.pressure         memory.oom.group
