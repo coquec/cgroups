@@ -1,0 +1,333 @@
+= cgroups
+:tags: Publish
+:author: Jose Couto
+:email: jcouto
+:date: abril 2022
+:revdate: 20220420
+:source-highlighter: rouge
+:toc:
+:toc-title: Índice
+:toclevels: 3
+:numbered:
+:appendix-caption: Apéndice
+:figure-caption: Figura
+:table-caption: Tabla
+
+== cgroups
+
+Los _cgroups_ son un sistema del kernel de Linux para limitar, priorizar el
+acceso y auditar el uso de los recursos por parte de los procesos, expuesto
+mediante un sistema de archivos que normalmente se monta en `/sys/fs/cgroup`.
+Un _cgroup_ es un conjunto de procesos que están sujetos a un conjunto de
+límites o parámetros definidos a través del sistema de archivos cgroup.  A los
+componentes del kernel que modifican el comportamiento de los procesos de un
+cgroup se les llama subsistemas, controladores de recursos o simplemente
+controladores (_controllers_).
+
+En general, podemos alterar el uso de los siguientes recursos:
+
+. La cuota de CPU.
+
+. La cantidad de memoria.
+
+. La cantidad de operaciones de E/S sobre los dispositivos de bloques.
+
+. El ancho de banda de red utilizado, marcando los paquetes e implantando
+  reglas de uso mediante otra aplicación.
+
+Los cgroups de un controlador se ordenan en una jerarquía que se define como
+subdirectorios en el sistema de archivos cgroup.  Podemos definir atributos en
+cada nivel de la jerarquía, pero los atributos definidos en los niveles
+inferiores no pueden sobrepasar los límites impuestos en los niveles
+superiores.
+
+Existen dos versiones de cgroups, la v1 y la v2 (también llamada de jerarquía
+unificada, disponible a partir del kernel 4.5).  En los sistemas con `systemd`,
+se elige qué versión utilizar con las opciones
+`systemd.unified_cgroup_hierarchy` y
+`systemd.legacy_systemd_cgroup_controller`.
+
+La v2 tiene menos controladores que la v1.  No hay previsión de eliminar la v1,
+por lo que ambas versiones pueden coexistir, pero un mismo controlador no puede
+usarse simultáneamente en las dos versiones.
+
+== cgroups v1
+
+En la v1, cada controlador puede montarse en su propio directorio en el sistema
+de archivos y tener su propia organización de procesos.  También podemos montar
+varios controladores en el mismo directorio y compartir la jerarquía de
+procesos.  Ese directorio y los que cuelgan de él representan cgroups, y los
+archivos que hay en ellos pueden leerse o escribirse para establecer los
+límites y las propiedades de los cgroups.
+
+En la v1, se pueden establecer límites diferentes para las distintas tareas de
+un proceso, pero se eliminó esta posibilidad en la v2 debido a los problemas
+que esto puede ocasionar (p. ej, no tiene sentido para los límites de memoria,
+porque todas las tareas de un proceso comparten la memoria).
+
+Para montar un controlador en una carpeta se utiliza mount, pasándole con la
+opción `-o` los controladores que queremos gestionar en ella:
+
+[source,console]
+----
+# mkdir /blas
+# mount -t cgroup -o cpu none /blas
+# mount -t cgroup -o cpu,cpuacct none /blas
+# mount -t cgroup -o all none /blas # Opción por defecto, equivale a no usar -o
+----
+
+WARNING: El *mismo conjunto* de controladores puede estar montado en varias
+carpetas, que tendrán exactamente el mismo contenido.
+
+Dentro de un cgroup, podemos utilizar dos archivos para automatizar un proceso
+que se lance cuando todos los procesos del cgroup hayan terminado.  Esto está
+pensado principalmente para poder eliminar los cgroups que ya no tengan
+procesos.  Para ello, se escribe en el archivo `release_agent` el path completo
+del programa que hay que ejecutar, y en el archivo `notify_on_release` se
+escribe un 1.  Hay un tipo especial de controlador, el `none` que solo soporta
+esto, lo que es útil para monitorizar procesos.  Por lo que parece, es
+necesario ponerle un nombre.  Por ejemplo:
+
+[source,console]
+----
+# mount -t cgroup -o none,name=nombre /directorio
+----
+== cgroups v2
+
+La posibilidad de la v1 de montar los controladores en directorios distintos
+generó una complejidad no prevista que se corrigió en la v2.  En esta versión,
+todos los controladores disponibles se montan en un único directorio, y no es
+posible referirse a un controlador concreto:
+
+[source,console]
+----
+# mount -t cgroups2 none /directorio
+----
+
+En la carpeta solo se montarán los controladores que no estén ya montados con
+la v1 (no se puede usar el mismo controlador en las dos versiones).
+
+Los procesos solo pueden pertenecer a un cgroup que no tenga descendientes o en
+el cgroup raíz.
+
+El mecanismo de notificación de eventos se controla con `cgroup.events`.  Es
+necesario monitorizar el archivo ante cambios, usando `inotify` o `poll`, por
+lo que no se puede lanzar automáticamente un proceso cuando un cgroup se queda
+sin procesos, como se hace en v1.  El archivo es de solo lectura, y tiene dos
+valores:
+
+[source,console]
+----
+# cat cgroup.events
+populated 0
+frozen 0
+----
+
+El valor `populated` valdrá 1 si hay algún proceso en el cgroup o en sus
+descendientes, y 0 en caso contrario.  El valor de `frozen` indica si el grupo
+está congelado o no.
+
+Cada cgroup tiene un archivo `cgroup.controllers` con los controladores
+disponibles en él, y otro llamado `cgroup.subtree_control` con los
+controladores habilitados, que siempre es un subconjunto del anterior.  Los
+controladores disponibles en un cgroup son los que estén habilitados en su
+cgroup padre.
+
+Se pueden habilitar o deshabilitar controladores (que no estén habilitados en
+los descendientes), de la siguiente manera:
+
+[source,console]
+----
+# pwd
+/sys/fs/cgroup/blas
+# cat cgroup.controllers
+cpuset cpu io memory hugetlb pids rdma misc
+# cat cgroup.subtree_control
+# echo "+memory +io" > cgroup.subtree_control
+# cat cgroup.subtree_control
+io memory
+# echo "-io" > cgroup.subtree_control
+# cat cgroup.subtree_control
+memory
+# mkdir rita
+# cd rita
+# pwd
+/sys/fs/cgroup/blas/rita
+# cat cgroup.controllers
+memory
+# echo "+io" > ../cgroup.subtree_control
+# cat cgroup.controllers
+io memory
+# cat cgroup.subtree_control
+# echo +io > cgroup.subtree_control
+# cat cgroup.subtree_control       
+io
+# echo "-io" > ../cgroup.subtree_control 
+echo: write error: device or resource busy
+----
+
+== Controladores en v1 y v2
+
+[.center]
+[%autowidth,cols=",^,^,",options="header"]
+|===
+| Controlador
+| v1
+| v2
+| Comentarios
+
+| cpu
+| X
+| X
+| En v2, sucesor de cpu y cpuacct.
+
+| cpuacct
+| X
+|
+|
+
+| cpuset
+| X
+| X
+|
+
+| memory
+| X
+| X
+|
+
+| devices
+| X
+|
+| Controla qué procesos pueden usar dispositivos o crearlos con mknod.  En v2,
+  no hay archivos para controlar esto, sino que se debe enlazar un programa
+  eBPF al cgroup.
+
+| freezer
+| X
+| X
+|
+
+| blkio
+| X
+|
+|
+
+| io
+|
+| X
+| Sucesor de blkio en v2.
+
+| perf_event
+| X
+| X
+|
+
+| net_cls
+| X
+|
+| No se soporta en v2.  iptables soporta filtros eBPF basados en los pathnames
+  de los cgroups.
+
+| net_prio
+| X
+|
+| No se soporta en v2.  iptables soporta filtros eBPF basados en los pathnames
+  de los cgroups.
+
+| hugetlb
+| X
+| X
+|
+
+| pids
+| X
+| X
+|
+
+| rdma
+| X
+| X
+|
+
+|===
+
+
+== Establecimiento de límites
+
+Para fijar los límites de los procesos que pertenezcan a un cgroup, se puede
+escribir directamente en el archivo correspondiente dentro del sistema de
+archivos cgroup.  Por ejemplo, lo siguiente hace que todos los procesos que
+pertenezcan al cgroup `/mi_cgroup` solo puedan utilizar una CPU del sistema:
+
+[source,console]
+----
+# echo 0 > /sys/fs/cgroup/mi_cgroup/cpuset.cpus
+----
+
+== Información del sistema sobre cgroup
+
+Podemos ver los controladores disponibles en el sistema consultando el archivo
+`/proc/cgroup`:
+
+[source,console]
+----
+$ cat /proc/cgroups 
+#subsys_name    hierarchy       num_cgroups     enabled
+cpuset  0       159     1
+cpu     0       159     1
+cpuacct 0       159     1
+blkio   0       159     1
+memory  0       159     1
+devices 0       159     1
+freezer 0       159     1
+net_cls 0       159     1
+perf_event      0       159     1
+net_prio        0       159     1
+hugetlb 0       159     1
+pids    0       159     1
+rdma    0       159     1
+misc    0       159     1
+----
+
+Se puede ver a qué cgroup pertenece un proceso en el archivo
+`/proc/<pid>/cgroup`.  El archivo tiene tres campos separados por dos puntos, y
+es distinto para las versiones 1 y 2:
+
+* El primer campo tiene el ID de la jerarquía v1, o 0 si estamos en v2.
+
+* El segundo campo tiene la lista de controladores activos en v1, y está vacío
+  en v2.
+
+* El tercer campo tiene el camino del cgroup a partir de la raíz del sistema de
+  archivos cgroup.
+
+
+[source,console]
+----
+$ cat /proc/self/cgroup 
+0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-org.kde.konsole-7086a657dd144184a30800e2b453899b.scope
+$ ls /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/app-org.kde.konsole-7086a657dd144184a30800e2b453899b.scope
+cgroup.controllers      cpu.pressure         memory.oom.group
+cgroup.events           cpu.stat             memory.pressure
+cgroup.freeze           io.pressure          memory.stat
+cgroup.kill             memory.current       memory.swap.current
+cgroup.max.depth        memory.events        memory.swap.events
+cgroup.max.descendants  memory.events.local  memory.swap.high
+cgroup.procs            memory.high          memory.swap.max
+cgroup.stat             memory.low           pids.current
+cgroup.subtree_control  memory.max           pids.events
+cgroup.threads          memory.min           pids.max
+cgroup.type             memory.numa_stat
+----
+
+== Órdenes útiles de systemd
+
+Los sistemas que arrancan con `systemd` tienen algunas órdenes útiles para
+comprobar el estado de los cgroups.
+
+`systemd-cgls` muestra el árbol de cgroups y los procesos que hay en las ramas.
+
+`systemd-cgtop` es similar a `top`, pero muestra los datos agrupados por
+cgroup.  Los datos se pueden ordenar por consumo de CPU, memoria u operaciones
+de E/S.
